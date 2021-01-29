@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Record3D Wi-Fi Streaming Demo</title>
+</head>
+<body>
+    <h1>Record3D live-streamed video from your iPhone/iPad</h1>
+    <video playsinline autoplay muted></video>
+
+    <form id="form-start-remote-streaming">
+        <input type="text" placeholder="Enter an IP address or the hostname of your iPhone/iPad" id="remote-address" style="width: 26em;" />
+        <input type="submit" value="Press to start streaming" />
+    </form>
+
+    <p>Works best with Google Chrome or Safari. You may experience issues when using Firefox.</p>
+    <p>For more details, visit <a href="https://record3d.app/features" target="_blank">https://record3d.app/features</a></p>
+
+    <script>
+        class SignalingClient {
+            constructor(serverURL) {
+                let self = this;
+                self.serverURL = serverURL;
+            }
+
+            retrieveOffer() {
+                let serverURL = this.serverURL + '/getOffer';
+                return fetch(serverURL)
+                    .then(resp => resp.json())
+                    .catch(e => {
+                        console.log('Error while requesting an offer.');
+                    });
+            }
+
+            sendAnswer(answer) {
+                let jsonAnswer = JSON.stringify(answer);
+                let serverURL = this.serverURL + '/answer';
+                fetch(serverURL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: jsonAnswer
+                }).catch(e => {
+                    console.log('Error while sending the answer.');
+                })
+            }
+        }
+
+        function getMetadata(serverURL) {
+            // Metadata contains the intrinsic matrix
+            let metadataEndpoint = serverURL + '/metadata';
+            return fetch(metadataEndpoint)
+                .then(resp => resp.json())
+                .catch(e => {
+                    console.log('Could not retrieve the intrinsic matrix.');
+                });
+        }
+
+        const video = document.querySelector("video");
+        const startReceivingStreamButton = document.querySelector("#form-start-remote-streaming");
+        let peerConnection = new RTCPeerConnection();
+        let signalingClient = new SignalingClient('');
+
+        startReceivingStreamButton.onsubmit = e => {
+            e.preventDefault();
+            let remoteAddress = document.querySelector("#remote-address").value;
+            if ( !remoteAddress.startsWith('http://') ) {
+                remoteAddress = 'http://' + remoteAddress
+            }
+            console.log('Remote address: ', remoteAddress);
+
+            getMetadata(remoteAddress)
+                .then(resp => console.log('Metadata: ', resp));
+
+            startReceivingStream(remoteAddress);
+        };
+
+        window.onunload = window.onbeforeunload = () => {
+            peerConnection.close();
+        };
+
+        // 3. Wait for the ICE trickle process to finish and then send answer.
+        peerConnection.onicecandidate = event => {
+            if (event.candidate === null) {
+                // ICE Candidate gathering process finished, send answer to the iDevice.
+                let jsonData = {'type': 'answer', 'data': peerConnection.localDescription.sdp};
+                signalingClient.sendAnswer(jsonData);
+                console.log('Finished ice candidate lookup. Sending answer.');
+            }
+        };
+
+        peerConnection.ontrack = event => {
+            console.log('Setting the new track to the video object.');
+            video.srcObject = event.streams[0];
+            video.play();
+        };
+
+        function startReceivingStream(serverURL) {
+            signalingClient.serverURL = serverURL;
+
+            // 1. Ask the iDevice for its offer.
+            signalingClient.retrieveOffer()
+                .then(remoteOffer => {
+                    if ( remoteOffer === undefined )
+                    {
+                        return;
+                    }
+                    // 2. Set the offer as the remote description, generate a suitable answer for it
+                    //    and set the answer as the local description.
+                    console.log(remoteOffer);
+
+                    peerConnection
+                        .setRemoteDescription(remoteOffer)
+                        .then(() => peerConnection.createAnswer())
+                        .then(sdp => peerConnection.setLocalDescription(sdp));
+
+                    // Now we wait for the ICE Tricke process to finish (see `peerConnection.onincecandidate`).
+                    // Then we will send send our answer to the iDevice, which will start the stream.
+                });
+        }
+
+    </script>
+</body>
+</html>
