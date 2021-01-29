@@ -1,5 +1,5 @@
 # <a href="https://record3d.app">Record3D</a> simple Wi-Fi Streaming demo
-***Be sure to check out also <a href="https://marek-simonik.github.io/" target="_blank">the Three.js 3D Video demo</a>! It allows you live stream 3D Videos via Wi-Fi and also to replay offline mp4 RGBD Videos.***
+***Be sure to check out also <a href="https://marek-simonik.github.io/record3d-wifi-streaming-and-rgbd-mp4-3d-video-demo/" target="_blank">the Three.js 3D Video demo</a>! It allows you live stream 3D Videos via Wi-Fi and also to replay offline mp4 RGBD Videos.***
 <hr>
 
 This is a trivial demo (minimal working example), which demonstrates how to setup a basic RGBD Video streaming session using <a href="https://record3d.app" target="_blank">Record3D</a>. Note that Wi-Fi Streaming is a part of the **paid Wi-Fi Streaming & RGBD video export Extension Pack**.
