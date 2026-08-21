@@ -1,4 +1,11 @@
 # <a href="https://record3d.app">Record3D</a> simple Wi-Fi Streaming demo
+**UPDATE 2026/08/21:** Added a new `perfect-perframe-metadata.html` demo, which shows how to read the exactly synchronized per-video-frame metadata (camera intrinsics and extrinsics). This feature is implemented using WebRTC Encoded Transforms.
+
+It uses Web Workers to read custom metadata associated with each video frame. Since the metadata is sent as a part of each received video frame, exact synchronization of video frames with their metadata is ensured. **Requires Record3D 1.11 or newer.**
+
+To test the demo, it needs to run on a webserver. It won't work with a `file://` URL. You can test the demo here (NOTE: **you must use the HTTP protocol, not HTTPS!**): [http://record3d.xyz/perfect-perframe-metadata](http://record3d.xyz/perfect-perframe-metadata).
+<hr>
+
 ***Be sure to check out also <a href="https://github.com/marek-simonik/record3d-wifi-streaming-and-rgbd-mp4-3d-video-demo" target="_blank">the Three.js 3D Video demo</a>! It allows you live stream 3D Videos via Wi-Fi and also to replay offline mp4 RGBD Videos.***
 <hr>
 

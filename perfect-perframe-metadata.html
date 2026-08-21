@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Record3D Wi-Fi Streaming Demo</title>
+    <script src="receivedVideoMetadataTransformerWorker.js"></script>
+</head>
+<body>
+<h1>Record3D live-streamed video from your iPhone/iPad</h1>
+<video playsinline autoplay muted></video>
+
+<form id="form-start-remote-streaming">
+    <input type="text" placeholder="Enter an IP address or the hostname of your iPhone/iPad" id="remote-address" style="width: 26em;"/>
+    <input type="submit" value="Press to start streaming"/>
+</form>
+
+<p>Works best with Google Chrome or Safari. You may experience issues when using Firefox.</p>
+<p>For more details, visit <a href="https://record3d.app/features" target="_blank">https://record3d.app/features</a></p>
+<strong>NOTE: This demo uses a Web Worker and the Encoded Transform API to parse exactly synchronized per-frame metadata (camera intrinsics and pose data). Make sure you run this demo on a server and NOT using the file:// URI, otherwise the worker won't work!</strong>
+<p>Open the inspector / console to see the live log of per-frame metadata.</p>
+
+<script>
+    class SignalingClient {
+        constructor(serverURL) {
+            let self = this;
+            self.serverURL = serverURL;
+        }
+
+        retrieveOffer() {
+            let serverURL = this.serverURL + '/getOffer';
+            return fetch( serverURL )
+                .then( resp => resp.json() )
+                .catch( e => {
+                    console.log( 'Error while requesting an offer.' );
+                } );
+        }
+
+        sendAnswer(answer) {
+            let jsonAnswer = JSON.stringify( answer );
+            let serverURL = this.serverURL + '/answer';
+            fetch( serverURL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: jsonAnswer
+            } ).catch( e => {
+                console.log( 'Error while sending the answer.' );
+            } )
+        }
+    }
+
+    class PerFrameMetadataStorage {
+        constructor() {
+            this.rtpTimestampToMetadata = {};
+        }
+
+        addMetadata(rtpTimestamp, metadata) {
+            this.rtpTimestampToMetadata[rtpTimestamp] = metadata;
+        }
+
+        readMetadata(rtpTimestamp) {
+            return this.rtpTimestampToMetadata[rtpTimestamp];
+        }
+    }
+
+    function getMetadata(serverURL) {
+        // Metadata contains the intrinsic matrix
+        let metadataEndpoint = serverURL + '/metadata';
+        return fetch( metadataEndpoint )
+            .then( resp => resp.json() )
+            .catch( e => {
+                console.log( 'Could not retrieve the intrinsic matrix.' );
+            } );
+    }
+
+    const video = document.querySelector( "video" );
+    const startReceivingStreamButton = document.querySelector( "#form-start-remote-streaming" );
+    let peerConnection = new RTCPeerConnection();
+    let signalingClient = new SignalingClient( '' );
+    let perFrameMetadataStorage = new PerFrameMetadataStorage();
+    const supportsEncodedTransforms = window.RTCRtpSender && "transform" in RTCRtpSender.prototype;
+
+    console.log('Are Encoded Transforms supported in this browser? ', supportsEncodedTransforms);
+
+    startReceivingStreamButton.onsubmit = e => {
+        e.preventDefault();
+        let remoteAddress = document.querySelector( "#remote-address" ).value;
+        if ( !remoteAddress.startsWith( 'http://' ) ) {
+            remoteAddress = 'http://' + remoteAddress
+        }
+        console.log( 'Remote address: ', remoteAddress );
+
+        getMetadata( remoteAddress )
+            .then( resp => console.log( 'Metadata: ', resp ) );
+
+        startReceivingStream( remoteAddress );
+    };
+
+    window.onunload = window.onbeforeunload = () => {
+        peerConnection.close();
+    };
+
+    // 3. Wait for the ICE trickle process to finish and then send answer.
+    peerConnection.onicecandidate = event => {
+        if ( event.candidate === null ) {
+            // ICE Candidate gathering process finished, send answer to the iDevice.
+            let jsonData = { 'type': 'answer', 'data': peerConnection.localDescription.sdp };
+            signalingClient.sendAnswer( jsonData );
+            console.log( 'Finished ice candidate lookup. Sending answer.' );
+        }
+    };
+
+    peerConnection.ontrack = event => {
+        console.log( 'Setting the new track to the video object.' );
+
+        /*
+         *  The video frames can contain metadata (such as camera intrinsic coefficients and extrinsics which are specific to that frame).
+         *  We apply a transform on the incoming video frames, which extracts the metadata and stores them.
+         *  The frame's rtpTimestamp is used to identify specific video frames.
+         *
+         *  The web worker sends a message to the main JS thread. The message contains a pair of (rtpTimestamp, metadataJsonObject).
+         *  The main JS thread then stores this pair into a global array, and the metadata can be read e.g. in the `requestVideoFrameCallback` thanks
+         *  to accessing `metadata.rtpTimestamp`.
+         */
+        const worker = new Worker( "receivedVideoMetadataTransformerWorker.js" );
+        worker.onmessage = (e) => {
+            // The Web Worker sent a frame's timestamp and its associated metadata; store it into the global storage
+            let workerMsg = e.data;
+            perFrameMetadataStorage.addMetadata(workerMsg.frameTimestamp, workerMsg.metadata);
+        };
+
+        worker.onmessageerror = (e) => {
+            console.error('Worker message error!', e);
+        };
+
+        worker.onerror = (e) => {
+            console.error('Worker error!', e);
+        }
+
+        event.receiver.transform = new RTCRtpScriptTransform( worker, {
+            name: "receiverTransform",
+        } );
+
+        video.srcObject = event.streams[0];
+        video.play();
+
+        // We want to receive a callback every time a new video frame is available (so that we can e.g. read the metadata.
+        reqVidMeta();
+    };
+
+    function reqVidMeta() {
+        let self = this;
+
+        video.requestVideoFrameCallback( (now, metadata) => {
+            let videoFrameRtpTimestamp = metadata.rtpTimestamp;
+
+            // We read this frame's metadata (camera intrinsics and extrinsics); it is accessible thanks to the rtpTimestamp key
+            // TODO: Access the bytes of the <video> tag to get
+            // TODO: Erase the metadata for this frame if you don't need it anymore; this will prevent accumulation of per-frame metadata
+
+            let currVideoFrameMetadata = perFrameMetadataStorage.readMetadata( videoFrameRtpTimestamp );
+            console.log( 'requestVideoFrameCallback: ', currVideoFrameMetadata );
+
+            // We can now access accurately synchronized per-frame metadata from the
+
+            self.reqVidMeta()
+        } );
+    }
+
+    function startReceivingStream(serverURL) {
+        signalingClient.serverURL = serverURL;
+
+        // 1. Ask the iDevice for its offer.
+        signalingClient.retrieveOffer()
+            .then( remoteOffer => {
+                if ( remoteOffer === undefined ) {
+                    return;
+                }
+                // 2. Set the offer as the remote description, generate a suitable answer for it
+                //    and set the answer as the local description.
+                console.log( remoteOffer );
+
+                peerConnection
+                    .setRemoteDescription( remoteOffer )
+                    .then( () => peerConnection.createAnswer() )
+                    .then( sdp => peerConnection.setLocalDescription( sdp ) );
+
+                // Now we wait for the ICE Tricke process to finish (see `peerConnection.onincecandidate`).
+                // Then we will send send our answer to the iDevice, which will start the stream.
+            } );
+    }
+
+</script>
+</body>
+</html>
